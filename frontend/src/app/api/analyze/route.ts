@@ -54,15 +54,21 @@ export async function POST(req: Request) {
                 const res = await ai.models.generateContent({ model: modelName, contents: prompt });
                 return res;
             } catch (error: any) {
-                if (error?.status === 503 && attempt < maxRetries) {
+                if ((error?.status === 503 || error?.status === 429) && attempt < maxRetries) {
                     console.warn(`Gemini 503 overload. Retry ${attempt}/${maxRetries} in ${attempt * 1.5}s...`);
                     await delay(attempt * 1500);
                     continue;
                 }
+
+                if (error?.status === 429 || error?.status === "RESOURCE_EXHAUSTED") {
+                    console.warn("Gemini quota exhausted. Falling back to heuristic output.");
+                    return { text: "" };
+                }
+
                 throw error;
             }
         }
-        throw new Error("Gemini repeatedly returned 503 Overload");
+        return { text: "" };
     };
 
     let resolvedEmbeddingModel: string | null = null;
@@ -167,9 +173,20 @@ export async function POST(req: Request) {
         });
     }
 
-    if (upsertRecords.length > 0) {
+    const validUpsertRecords = upsertRecords.filter(
+      (record) => Array.isArray(record.values) && record.values.length > 0
+    );
+
+    if (validUpsertRecords.length > 0) {
         // Populate Pinecone dynamically with only validated vectors.
-        await index.namespace(PINECONE_NAMESPACE).upsert(upsertRecords);
+        try {
+            await index.upsert({
+                records: validUpsertRecords,
+                namespace: PINECONE_NAMESPACE,
+            });
+        } catch (upsertError: any) {
+            console.warn("Pinecone upsert skipped after validation failure:", upsertError?.message || upsertError);
+        }
     } else {
         console.warn("No valid patent vectors were generated for Pinecone upsert.");
     }

@@ -5,7 +5,7 @@ import Link from "next/link";
 
 type NodeTelemetry = {
    node: string;
-   status: "ONLINE" | "OFFLINE";
+  status: "ONLINE" | "DEGRADED" | "OFFLINE";
    latency: number | null;
    error?: string;
 };
@@ -76,13 +76,18 @@ export default function StatusBoard() {
                  </div>
               ) : (
                  data.map((matrix, idx) => (
-                    <div key={idx} style={{ padding: "24px", background: "#080808", borderLeft: matrix.status === "ONLINE" ? "2px solid #00ff66" : "2px solid #ff3333", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <div key={idx} style={{ padding: "24px", background: "#080808", borderLeft: matrix.status === "ONLINE" ? "2px solid #00ff66" : matrix.status === "DEGRADED" ? "2px solid #ffb000" : "2px solid #ff3333", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                         <div>
                            <div style={{ color: "#fff", textTransform: "uppercase", fontWeight: "bold", fontSize: "16px", letterSpacing: "1px", marginBottom: "8px" }}>{matrix.node}</div>
                            
                            <div style={{ fontSize: "10px", color: "#666", textTransform: "uppercase", letterSpacing: "2px" }}>
                               Node Status Check
                            </div>
+                        {matrix.error && (
+                          <div style={{ marginTop: "8px", fontSize: "10px", color: matrix.status === "DEGRADED" ? "#ffb000" : "#ff6666", letterSpacing: "0.08em", maxWidth: "560px", lineHeight: 1.5 }}>
+                            {matrix.error}
+                          </div>
+                        )}
                         </div>
 
                         <div style={{ textAlign: "right", display: "flex", alignItems: "center", gap: "32px" }}>
@@ -92,7 +97,7 @@ export default function StatusBoard() {
                               </div>
                            )}
 
-                           <div style={{ background: matrix.status === "ONLINE" ? "rgba(0,255,102,0.1)" : "rgba(255,51,51,0.1)", padding: "8px 16px", border: matrix.status === "ONLINE" ? "1px solid #00ff66" : "1px solid #ff3333", color: matrix.status === "ONLINE" ? "#00ff66" : "#ff3333", fontSize: "11px", letterSpacing: "2px" }}>
+                             <div style={{ background: matrix.status === "ONLINE" ? "rgba(0,255,102,0.1)" : matrix.status === "DEGRADED" ? "rgba(255,176,0,0.1)" : "rgba(255,51,51,0.1)", padding: "8px 16px", border: matrix.status === "ONLINE" ? "1px solid #00ff66" : matrix.status === "DEGRADED" ? "1px solid #ffb000" : "1px solid #ff3333", color: matrix.status === "ONLINE" ? "#00ff66" : matrix.status === "DEGRADED" ? "#ffb000" : "#ff3333", fontSize: "11px", letterSpacing: "2px" }}>
                                {matrix.status}
                            </div>
                         </div>

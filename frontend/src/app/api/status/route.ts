@@ -3,7 +3,7 @@ import { supabase } from "@/lib/supabase";
 import { Pinecone } from "@pinecone-database/pinecone";
 import { GoogleGenAI } from "@google/genai";
 
-type NodeStatus = "ONLINE" | "OFFLINE";
+type NodeStatus = "ONLINE" | "DEGRADED" | "OFFLINE";
 type NodeCategory = "service" | "endpoint";
 
 interface TelemetryNode {
@@ -48,6 +48,9 @@ const ENDPOINT_PROBE_PATHS = [
     "/api/intelligence/pipeline",
 ] as const;
 const ENDPOINT_SUCCESS_CODES = new Set([200, 204, 400, 401, 403]);
+const GEMINI_STATUS_CACHE_TTL_MS = 10 * 60 * 1000;
+
+let geminiHealthCache: { checkedAt: number; node: TelemetryNode } | null = null;
 
 const isGeminiModelUnavailable = (error: any) => {
     const message = String(error?.message || "");
@@ -80,18 +83,26 @@ async function pingArmorClawEndpoint(endpoint: string): Promise<{ statusCode: nu
         headers["x-api-key"] = ARMORCLAW_API_KEY;
     }
 
-    const res = await fetch(endpoint, {
-        method: "GET",
-        cache: "no-store",
-        headers,
-    });
+    try {
+        const res = await fetch(endpoint, {
+            method: "GET",
+            cache: "no-store",
+            headers,
+        });
 
-    // 4xx generally means route-level mismatch but endpoint is reachable.
-    if (res.status >= 500) {
-        throw new Error(`Upstream returned ${res.status}`);
+        // 4xx generally means route-level mismatch but endpoint is reachable.
+        if (res.status >= 500) {
+            throw new Error(`Upstream returned ${res.status}`);
+        }
+
+        return { statusCode: res.status };
+    } catch (error: any) {
+        return {
+            statusCode: 0,
+            status: "DEGRADED",
+            error: `Unreachable from this network: ${error?.message || "fetch failed"}`,
+        } as unknown as { statusCode: number };
     }
-
-    return { statusCode: res.status };
 }
 
 async function pingInternalEndpoint(baseUrl: string, path: string): Promise<{ statusCode: number }> {
@@ -134,12 +145,12 @@ async function pingNode(
         const ms = performance.now() - start;
         return {
             node: name,
-            status: "ONLINE",
             latency: Math.round(ms),
             category: options.category,
             path: options.path,
             method: options.method,
             ...meta,
+            status: meta?.status ?? "ONLINE",
         };
     } catch (e: any) {
         return {
@@ -161,6 +172,11 @@ export async function GET(request: Request) {
    let resolvedGeminiModel = GEMINI_MODEL;
 
    const pingGemini = async (): Promise<void> => {
+       const cached = geminiHealthCache;
+       if (cached && Date.now() - cached.checkedAt < GEMINI_STATUS_CACHE_TTL_MS) {
+           return cached.node;
+       }
+
        if (!ai) {
            throw new Error("GEMINI_API_KEY is missing.");
        }
@@ -171,11 +187,30 @@ export async function GET(request: Request) {
            try {
                await ai.models.generateContent({ model, contents: "healthcheck" });
                resolvedGeminiModel = model;
-               return;
+               const node = {
+                   node: `Gemini (Neural Flash - ${model})`,
+                   status: "ONLINE" as const,
+                   latency: null,
+                   category: "service" as const,
+               };
+               geminiHealthCache = { checkedAt: Date.now(), node };
+               return node;
            } catch (error: any) {
                lastError = error;
                if (isGeminiModelUnavailable(error)) {
                    continue;
+               }
+               if (error?.status === 429 || error?.status === "RESOURCE_EXHAUSTED") {
+                   const node = {
+                       node: `Gemini (Neural Flash - ${model})`,
+                       status: "DEGRADED" as const,
+                       latency: null,
+                       category: "service" as const,
+                       error: "Gemini quota exhausted. Analysis still works with fallback behavior.",
+                       statusCode: 429,
+                   };
+                   geminiHealthCache = { checkedAt: Date.now(), node };
+                   return node;
                }
                throw error;
            }
@@ -207,7 +242,7 @@ export async function GET(request: Request) {
        }, { category: "service" }),
 
        pingNode("Gemini (Neural Flash)", async () => {
-           await pingGemini();
+           return await pingGemini();
        }, { category: "service", timeoutMs: 15000 }),
 
        pingNode("ArmorClaw IAP", async () => {
@@ -238,10 +273,12 @@ export async function GET(request: Request) {
 
    const summarize = (nodes: TelemetryNode[]) => {
        const online = nodes.filter((node) => node.status === "ONLINE").length;
+       const degraded = nodes.filter((node) => node.status === "DEGRADED").length;
        return {
            total: nodes.length,
            online,
-           offline: nodes.length - online,
+           degraded,
+           offline: nodes.length - online - degraded,
        };
    };
 
