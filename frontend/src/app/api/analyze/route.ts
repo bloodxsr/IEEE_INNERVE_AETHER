@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { scrubPII, hashIPMetadata } from "@/lib/armorclaw";
 import { GoogleGenAI } from "@google/genai";
 import { Pinecone } from "@pinecone-database/pinecone";
+import { resizeVector } from "@/server/intelligence/utils";
+
 
 // Ensures Next.js treats this as a dynamic endpoint
 export const dynamic = "force-dynamic";
@@ -160,10 +162,13 @@ export async function POST(req: Request) {
             continue;
         }
 
+        // Resize to match Pinecone index dimension (1024)
+        const resizedVector = resizeVector(embeddingVector, 1024);
+        
         const recordId = patent.id || `PAT-${Date.now()}-${indexPosition}`;
         upsertRecords.push({
             id: recordId,
-            values: embeddingVector,
+            values: resizedVector,
             metadata: {
                 title: patent.title,
                 snippet: patent.snippet,
@@ -176,6 +181,7 @@ export async function POST(req: Request) {
     const validUpsertRecords = upsertRecords.filter(
       (record) => Array.isArray(record.values) && record.values.length > 0
     );
+
 
     if (validUpsertRecords.length > 0) {
         // Populate Pinecone dynamically with only validated vectors.
@@ -197,9 +203,13 @@ export async function POST(req: Request) {
 
     if (!userVector) throw new Error("Failed to generate vector for user abstract.");
 
+    // Resize query vector to match Pinecone index dimension (1024)
+    const queryVector = resizeVector(userVector, 1024);
+
     // 6. Neural Prior Art Check (Pinecone Vector Search against freshly loaded live data)
     const queryResponse = await index.namespace(PINECONE_NAMESPACE).query({
-        vector: userVector,
+        vector: queryVector,
+
         topK: 3,
         includeMetadata: true
     });

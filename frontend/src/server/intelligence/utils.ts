@@ -201,6 +201,25 @@ export const inferDomain = (text: string): string => {
   return "General Technology";
 };
 
+export const resizeVector = (vector: number[], targetDim: number): number[] => {
+  if (vector.length === targetDim) return vector.slice(); // No resize needed
+
+  let resized: number[];
+  if (vector.length > targetDim) {
+    // Truncate and renormalize
+    resized = vector.slice(0, targetDim);
+  } else {
+    // Pad with zeros
+    resized = [...vector, ...Array(targetDim - vector.length).fill(0)];
+  }
+
+  // Renormalize to preserve cosine similarity properties
+  const norm = Math.sqrt(resized.reduce((sum, v) => sum + v * v, 0));
+  if (norm === 0) return resized;
+
+  return resized.map(v => v / norm);
+};
+
 export const extractRequiredSkills = (ideaText: string): string[] => {
   const keywords = tokenize(ideaText);
   const skills = new Set<string>();
@@ -230,3 +249,4 @@ export const extractRequiredSkills = (ideaText: string): string[] => {
 
   return [...skills];
 };
+

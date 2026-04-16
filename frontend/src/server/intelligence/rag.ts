@@ -1,8 +1,10 @@
 import { Pinecone } from "@pinecone-database/pinecone";
+import { resizeVector } from "@/server/intelligence/utils";
 
 import type { LlmRuntime } from "@/server/intelligence/llm";
 import type { PriorArtItem } from "@/server/intelligence/types";
 import { topKeywords } from "@/server/intelligence/utils";
+
 
 const parseSerpPatents = (payload: any): PriorArtItem[] => {
   const organic = Array.isArray(payload?.organic_results) ? payload.organic_results : [];
@@ -60,10 +62,14 @@ export const retrievePriorArtFromPinecone = async (
     const vector = await llm.embed(ideaText);
     if (!Array.isArray(vector) || vector.length === 0) return [];
 
+    // Resize vector to match Pinecone index dimension (1024)
+    const queryVector = resizeVector(vector, 1024);
+
     const pc = new Pinecone({ apiKey });
     const index = pc.Index(indexName);
     const response: any = await index.namespace(namespace).query({
-      vector,
+      vector: queryVector,
+
       topK,
       includeMetadata: true,
     });
